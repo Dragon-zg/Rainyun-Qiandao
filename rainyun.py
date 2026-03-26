@@ -153,7 +153,7 @@ class WXPusherProvider(NotificationProvider):
     """WXPusher 推送渠道"""
     def __init__(self, app_token, wx_app_topic, uids):
         self.app_token = app_token
-        self.wx_app_topic = wx_app_topic
+        self.wx_app_topic = wx_app_topic if isinstance(wx_app_topic, list) else [wx_app_topic.strip() for wx_app_topic in wx_app_topic.split(',') if wx_app_topic.strip()]
         self.uids = uids if isinstance(uids, list) else [uid.strip() for uid in uids.split(',') if uid.strip()]
 
     def send(self, title, context):
