@@ -879,11 +879,72 @@ def get_screenshot_html(screenshot_path):
 
 
 
+MAX_HTML_REPORT_LENGTH = 40000
+HTML_REPORT_SAFE_LENGTH = 39500
+
+
 def generate_html_report(results):
     """生成 HTML 签到报告"""
     now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     success_count = len([r for r in results if r['status']])
     total_count = len(results)
+
+    def build_points_element(res):
+        if res.get('points'):
+            points = res['points']
+            money = points / 2000
+            return f"""
+            <div class="row-item" style="color: #f59e0b; font-weight: 500;">
+                <img src="{BASE64_ICONS['coin']}" class="icon-img" alt="coin" />
+                <span>{points} (≈￥{money:.2f})</span>
+            </div>
+            """
+
+        return f"""
+            <div class="row-item" style="color: var(--text-error);">
+               <span>{res['msg']}</span>
+            </div>
+            """
+
+    def build_card_html(res, screenshot_html=""):
+        status_color = "var(--text-success)" if res['status'] else "var(--text-error)"
+        status_bg = "var(--bg-success)" if res['status'] else "var(--bg-error)"
+        points_element = build_points_element(res)
+        return f"""
+        <div class="card">
+            <!-- 上半部分：用户信息 + 状态徽标 -->
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                <div class="row-item" style="font-weight: 600; font-size: 15px;">
+                    <span>{res['username']}</span>
+                </div>
+                <span style="background-color: {status_bg}; color: {status_color}; padding: 2px 8px; border-radius: 6px; font-size: 12px; font-weight: 600;">
+                    {'签到成功' if res['status'] else '签到失败'}
+                </span>
+            </div>
+
+            <!-- 分割线 -->
+            <div style="height: 1px; background-color: var(--border); margin-bottom: 12px; opacity: 0.5;"></div>
+
+            <!-- 下半部分：积分信息/错误信息 + 更多细节 -->
+            <div style="display: flex; justify-content: space-between; align-items: center; font-size: 13px;">
+                {points_element}
+                <div class="row-item" style="color: var(--text-sub); font-size: 12px;">
+                    <span>重试: {res.get('retries', 0)}</span>
+                </div>
+            </div>
+            {screenshot_html}
+        </div>
+        """
+
+    def build_truncation_notice(displayed_count, screenshots_removed=False):
+        screenshot_notice = "，部分截图已省略" if screenshots_removed else ""
+        return f"""
+        <div class="card" style="border-style: dashed;">
+            <div style="color: var(--text-sub); font-size: 13px; line-height: 1.6;">
+                报告因长度限制已截断，当前展示 {displayed_count}/{total_count} 个账号{screenshot_notice}。
+            </div>
+        </div>
+        """
 
     # 基础样式
     style_block = """
@@ -933,7 +994,7 @@ def generate_html_report(results):
     </style>
     """
 
-    html = f"""
+    prefix = f"""
     {style_block}
     <div class="container">
         <div class="header">
@@ -956,62 +1017,61 @@ def generate_html_report(results):
         <div class="content">
     """
 
-
-    for res in results:
-        status_color = "var(--text-success)" if res['status'] else "var(--text-error)"
-        status_bg = "var(--bg-success)" if res['status'] else "var(--bg-error)"
-
-        points_element = ""
-        if res.get('points'):
-            points = res['points']
-            money = points / 2000
-            points_element = f"""
-            <div class="row-item" style="color: #f59e0b; font-weight: 500;">
-                <img src="{BASE64_ICONS['coin']}" class="icon-img" alt="coin" />
-                <span>{points} (≈￥{money:.2f})</span>
-            </div>
-            """
-        else:
-            # 失败时显示错误信息
-            points_element = f"""
-            <div class="row-item" style="color: var(--text-error);">
-               <span>{res['msg']}</span>
-            </div>
-            """
-
-        html += f"""
-        <div class="card">
-            <!-- 上半部分：用户信息 + 状态徽标 -->
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-                <div class="row-item" style="font-weight: 600; font-size: 15px;">
-                    <span>{res['username']}</span>
-                </div>
-                <span style="background-color: {status_bg}; color: {status_color}; padding: 2px 8px; border-radius: 6px; font-size: 12px; font-weight: 600;">
-                    {'签到成功' if res['status'] else '签到失败'}
-                </span>
-            </div>
-
-            <!-- 分割线 -->
-            <div style="height: 1px; background-color: var(--border); margin-bottom: 12px; opacity: 0.5;"></div>
-
-            <!-- 下半部分：积分信息/错误信息 + 更多细节 -->
-            <div style="display: flex; justify-content: space-between; align-items: center; font-size: 13px;">
-                {points_element}
-                <div class="row-item" style="color: var(--text-sub); font-size: 12px;">
-                    <span>重试: {res.get('retries', 0)}</span>
-                </div>
-            </div>
-            {get_screenshot_html(res.get('screenshot'))}
-        </div>
-        """
-
-    html += """
+    suffix = """
         </div>
         <div class="footer">
             Powered by Rainyun-Qiandao
         </div>
     </div>
     """
+
+    html_parts = [prefix]
+    displayed_count = 0
+    screenshots_removed = False
+    truncated = False
+
+    for res in results:
+        screenshot_html = get_screenshot_html(res.get('screenshot'))
+        card_html = build_card_html(res, screenshot_html)
+        candidate_html = "".join(html_parts) + card_html + suffix
+
+        if len(candidate_html) <= HTML_REPORT_SAFE_LENGTH:
+            html_parts.append(card_html)
+            displayed_count += 1
+            continue
+
+        if screenshot_html:
+            card_without_screenshot = build_card_html(res)
+            candidate_html = "".join(html_parts) + card_without_screenshot + suffix
+            if len(candidate_html) <= HTML_REPORT_SAFE_LENGTH:
+                html_parts.append(card_without_screenshot)
+                displayed_count += 1
+                screenshots_removed = True
+                continue
+
+        truncated = True
+        break
+
+    if truncated:
+        truncation_notice = build_truncation_notice(displayed_count, screenshots_removed)
+        candidate_html = "".join(html_parts) + truncation_notice + suffix
+        if len(candidate_html) <= MAX_HTML_REPORT_LENGTH:
+            html_parts.append(truncation_notice)
+
+    html = "".join(html_parts) + suffix
+
+    if len(html) > MAX_HTML_REPORT_LENGTH:
+        fallback_notice = build_truncation_notice(displayed_count, screenshots_removed)
+        html = prefix + fallback_notice + suffix
+        if len(html) > MAX_HTML_REPORT_LENGTH:
+            html = prefix + """
+        <div class="card" style="border-style: dashed;">
+            <div style="color: var(--text-sub); font-size: 13px; line-height: 1.6;">
+                报告内容过长，已自动精简，请减少截图或账号数量后重试。
+            </div>
+        </div>
+    """ + suffix
+
     return html
 
 
@@ -2185,8 +2245,7 @@ if __name__ == "__main__":
     logger = setup_logging()
     ver = "2.2-docker-notify-pp"
     logger.info("------------------------------------------------------------------")
-    logger.info(f"雨云签到工具 v{ver} by LeapYa ~")
-    logger.info("Github发布页: https://github.com/LeapYa/Rainyun-Qiandao")
+    logger.info(f"雨云签到工具 v{ver}")
     logger.info("------------------------------------------------------------------")
     logger.info("已启用日志轮转功能，将自动清理7天前的日志")
     if debug:
