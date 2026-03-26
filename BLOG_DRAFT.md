@@ -73,8 +73,4 @@ tags:
 
 ---
 
-**最后：**
-既然都白嫖了，别忘了给原作者的仓库点个 **Star** ⭐ 哦！
-仓库地址：[https://github.com/LeapYa/Rainyun-Qiandao](https://github.com/LeapYa/Rainyun-Qiandao)
-
 #Rainyun #自动签到 #GitHubActions #白嫖 #Python
