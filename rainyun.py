@@ -151,8 +151,9 @@ class PushPlusProvider(NotificationProvider):
 
 class WXPusherProvider(NotificationProvider):
     """WXPusher 推送渠道"""
-    def __init__(self, app_token, uids):
+    def __init__(self, app_token, wx_app_topic, uids):
         self.app_token = app_token
+        self.wx_app_topic = wx_app_topic
         self.uids = uids if isinstance(uids, list) else [uid.strip() for uid in uids.split(',') if uid.strip()]
 
     def send(self, title, context):
@@ -163,6 +164,7 @@ class WXPusherProvider(NotificationProvider):
             "appToken": self.app_token,
             "content": content,
             "summary": title,
+            "topicIds": self.wx_app_topic,
             "contentType": 2,  # 1=Text, 2=HTML
             "uids": self.uids
         }
@@ -878,76 +880,140 @@ def get_screenshot_html(screenshot_path):
 
 
 def generate_html_report(results):
-    """生成 HTML 签到报告（最大 4000 字符）"""
-    from html import escape
-
-    max_length = 4000
-    now_str = datetime.now().strftime('%m-%d %H:%M')
+    """生成 HTML 签到报告"""
+    now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     success_count = len([r for r in results if r['status']])
     total_count = len(results)
-    failed_count = total_count - success_count
-    screenshot_count = len([r for r in results if r.get('screenshot')])
 
-    def trim(text, limit):
-        text = str(text or '').strip()
-        return text if len(text) <= limit else text[:max(0, limit - 1)] + '…'
+    # 基础样式
+    style_block = """
+    <style>
+        :root {
+            --bg-body: #f9fafb;
+            --bg-card: #ffffff;
+            --text-main: #111827;
+            --text-sub: #6b7280;
+            --border: #e5e7eb;
+            --bg-success: #ecfdf5;
+            --text-success: #059669;
+            --bg-error: #fef2f2;
+            --text-error: #dc2626;
+            --bg-footer: #f3f4f6;
+            --text-footer: #9ca3af;
+        }
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg-body: #18181b;
+                --bg-card: #27272a;
+                --text-main: #f3f4f6;
+                --text-sub: #9ca3af;
+                --border: #3f3f46;
+                --bg-success: #064e3b;
+                --text-success: #34d399;
+                --bg-error: #7f1d1d;
+                --text-error: #f87171;
+                --bg-footer: #1f2937;
+                --text-footer: #6b7280;
+            }
+        }
+        .container { max-width: 600px; margin: 0 auto; background-color: var(--bg-body); border-radius: 16px; overflow: hidden; border: 1px solid var(--border); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06); }
+        .header { background-color: var(--bg-card); padding: 24px; border-bottom: 1px solid var(--border); }
+        .title { margin: 0; color: var(--text-main); font-size: 20px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+        .subtitle { margin-top: 8px; color: var(--text-sub); font-size: 13px; font-weight: 500;}
+        .badges { margin-top: 16px; display: flex; gap: 8px; }
+        .badge-success { background-color: var(--bg-success); color: var(--text-success); padding: 4px 12px; border-radius: 20px; font-size: 13px; font-weight: 600; }
+        .badge-error { background-color: var(--bg-error); color: var(--text-error); padding: 4px 12px; border-radius: 20px; font-size: 13px; font-weight: 600; }
+        .content { padding: 16px; background-color: var(--bg-body); }
+        .card { background-color: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 12px; box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06); }
+        .row-item { display: flex; align-items: center; gap: 6px; }
+        .footer { background-color: var(--bg-body); padding: 20px; text-align: center; font-size: 12px; color: var(--text-footer); }
+        /* Fix SVG size */
+        svg { width: 20px; height: 20px; display: block; }
+        .icon-img { width: 20px; height: 20px; vertical-align: middle; display: inline-block; }
+    </style>
+    """
 
-    def render(compact=False, max_rows=None):
-        username_limit = 10 if compact else 16
-        msg_limit = 18 if compact else 36
-        rows = []
+    html = f"""
+    {style_block}
+    <div class="container">
+        <div class="header">
+            <h3 class="title">
+                🌧️ 雨云签到报告
+            </h3>
+            <div class="subtitle">
+                {now_str}
+            </div>
+            <div class="badges">
+                <span class="badge-success">
+                    成功: {success_count}
+                </span>
+                <span class="badge-error">
+                    失败: {total_count - success_count}
+                </span>
+            </div>
+        </div>
 
-        for idx, res in enumerate(results):
-            if max_rows is not None and idx >= max_rows:
-                remaining = len(results) - max_rows
-                rows.append(f"<div>其余 {remaining} 个账号已省略</div>")
-                break
+        <div class="content">
+    """
 
-            username = escape(trim(res.get('username', '-'), username_limit))
-            retries = int(res.get('retries', 0) or 0)
 
-            if res.get('status') and res.get('points'):
-                points = int(res['points'])
-                detail = f"+{points}"
-                if retries > 0:
-                    detail += f" r{retries}"
-                line = f"<div><b>{username}</b> <span style='color:#16a34a'>成功</span> {detail}</div>"
-            else:
-                msg = escape(trim(res.get('msg', '失败'), msg_limit))
-                detail = f"{msg}"
-                if retries > 0:
-                    detail += f" r{retries}"
-                line = f"<div><b>{username}</b> <span style='color:#dc2626'>失败</span> {detail}</div>"
+    for res in results:
+        status_color = "var(--text-success)" if res['status'] else "var(--text-error)"
+        status_bg = "var(--bg-success)" if res['status'] else "var(--bg-error)"
 
-            rows.append(line)
+        points_element = ""
+        if res.get('points'):
+            points = res['points']
+            money = points / 2000
+            points_element = f"""
+            <div class="row-item" style="color: #f59e0b; font-weight: 500;">
+                <img src="{BASE64_ICONS['coin']}" class="icon-img" alt="coin" />
+                <span>{points} (≈￥{money:.2f})</span>
+            </div>
+            """
+        else:
+            # 失败时显示错误信息
+            points_element = f"""
+            <div class="row-item" style="color: var(--text-error);">
+               <span>{res['msg']}</span>
+            </div>
+            """
 
-        omitted = f"<div style='color:#6b7280'>已省略 {screenshot_count} 张截图</div>" if screenshot_count else ""
-        html = (
-            "<div style='max-width:520px;margin:auto;padding:12px;font:14px -apple-system,BlinkMacSystemFont,Segoe UI,Arial;color:#111'>"
-            f"<div><b>雨云签到</b> {now_str}</div>"
-            f"<div>成功 {success_count} / {total_count}，失败 {failed_count}</div>"
-            f"{''.join(rows)}"
-            f"{omitted}"
-            "</div>"
-        )
-        return html
+        html += f"""
+        <div class="card">
+            <!-- 上半部分：用户信息 + 状态徽标 -->
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                <div class="row-item" style="font-weight: 600; font-size: 15px;">
+                    <span>{res['username']}</span>
+                </div>
+                <span style="background-color: {status_bg}; color: {status_color}; padding: 2px 8px; border-radius: 6px; font-size: 12px; font-weight: 600;">
+                    {'签到成功' if res['status'] else '签到失败'}
+                </span>
+            </div>
 
-    html = render()
-    if len(html) <= max_length:
-        return html
+            <!-- 分割线 -->
+            <div style="height: 1px; background-color: var(--border); margin-bottom: 12px; opacity: 0.5;"></div>
 
-    html = render(compact=True)
-    if len(html) <= max_length:
-        return html
+            <!-- 下半部分：积分信息/错误信息 + 更多细节 -->
+            <div style="display: flex; justify-content: space-between; align-items: center; font-size: 13px;">
+                {points_element}
+                <div class="row-item" style="color: var(--text-sub); font-size: 12px;">
+                    <span>重试: {res.get('retries', 0)}</span>
+                </div>
+            </div>
+            {get_screenshot_html(res.get('screenshot'))}
+        </div>
+        """
 
-    reserved = 120
-    row_budget = max(1, (max_length - reserved) // 40)
-    html = render(compact=True, max_rows=row_budget)
-
-    if len(html) > max_length:
-        html = html[:max_length - 4] + "</div>"
-
+    html += """
+        </div>
+        <div class="footer">
+            Powered by Rainyun-Qiandao
+        </div>
+    </div>
+    """
     return html
+
 
 
 
@@ -1315,10 +1381,11 @@ def run_all_accounts():
             
         # 注册 WXPusher
         wx_app_token = os.getenv("WXPUSHER_APP_TOKEN")
+        wx_app_topic = os.getenv("WXPUSHER_APP_TOPIC")
         wx_uids = os.getenv("WXPUSHER_UIDS")
         if wx_app_token and wx_uids:
             logger.info("Configuring WXPusher provider...")
-            notification_manager.add_provider(WXPusherProvider(wx_app_token, wx_uids))
+            notification_manager.add_provider(WXPusherProvider(wx_app_token, wx_app_topic, wx_uids))
             
         # 注册 DingTalk
         dingtalk_token = os.getenv("DINGTALK_ACCESS_TOKEN")
